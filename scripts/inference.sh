@@ -1,3 +1,4 @@
+
 set -x
 
 CONFIG=$1
@@ -8,6 +9,6 @@ OUTDIR=${4:-"./examples/res"}
 python scripts/demo_inference.py \
     --cfg ${CONFIG} \
     --checkpoint ${CKPT} \
-    --video ${VIDEO} \
+    --indir ${VIDEO} \
     --outdir ${OUTDIR} \
-    --detector yolo --save_video --detbatch 5 --posebatch 20 --gpus 3 --pose_track --qsize 64 --sp
+    --detector yolo --save_video --detbatch 5 --posebatch 25 --gpus 0,1 --qsize 64 --sp --pose_track

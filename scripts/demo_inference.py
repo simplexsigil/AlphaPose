@@ -4,6 +4,7 @@ import os
 import platform
 import sys
 import time
+import cv2
 
 import numpy as np
 import torch
@@ -82,6 +83,16 @@ parser.add_argument('--pose_flow', dest='pose_flow',
                     help='track humans in video with PoseFlow', action='store_true', default=False)
 parser.add_argument('--pose_track', dest='pose_track',
                     help='track humans in video with reid', action='store_true', default=False)
+parser.add_argument('--output_video_format', dest='output_video_format',
+                    help='video extension of the output video visualization', type=str, default='avi')
+"""----------------------------- Sims/ADL options (Zdravko)-----------------------------"""
+parser.add_argument('--output_video_fps', dest='output_video_fps',
+                    help='video fps of the output video visualization', type=int, default=30)
+parser.add_argument('--output_video_width', dest='output_video_width',
+                    help='video width of the output video visualization', type=int, default=342)
+parser.add_argument('--output_video_height', dest='output_video_height',
+                    help='video height of the output video visualization', type=int, default=256)
+
 
 args = parser.parse_args()
 cfg = update_config(args.cfg)
@@ -206,7 +217,32 @@ if __name__ == "__main__":
         video_save_opt.update(det_loader.videoinfo)
         writer = DataWriter(cfg, args, save_video=True, video_save_opt=video_save_opt, queueSize=queueSize).start()
     else:
-        writer = DataWriter(cfg, args, save_video=False, queueSize=queueSize).start()
+        # Author: Zdravko
+        ######################################################################################################################
+        from alphapose.utils.writer import DEFAULT_VIDEO_SAVE_OPT as video_save_opt
+
+        if args.output_video_format == 'avi':
+            video_save_opt['fourcc'] = cv2.VideoWriter_fourcc('M','J','P','G')
+        else:
+            print("Unsupported output video format!")
+            print("Exiting...")
+            exit()
+
+        output_dir_first_level = os.path.join(args.outputpath, os.path.basename(os.path.dirname(args.inputpath)))
+        if not os.path.exists(output_dir_first_level):
+            os.mkdir(output_dir_first_level) # output_root/class/ for Sims and output_root/vid_id for Toyota ADL
+        output_dir = os.path.join(output_dir_first_level, os.path.basename(args.inputpath))
+        #output_dir = output_dir_first_level
+        if not os.path.exists(output_dir):
+            os.mkdir(output_dir) # output_root/class/class_video/ for Sims or same as before for Toyota ADL
+        video_save_opt['savepath'] = os.path.join(output_dir, 'AlphaPose_' + os.path.basename(args.inputpath) + '.' + args.output_video_format)
+        print('Video will be written in:', video_save_opt['savepath'])
+        video_save_opt['fps'] = args.output_video_fps
+        video_save_opt['frameSize'] = (args.output_video_width, args.output_video_height)
+
+        args.outputpath = os.path.dirname(video_save_opt['savepath']) # make sure json file is written in the correct dir
+        ######################################################################################################################
+        writer = DataWriter(cfg, args, save_video=args.save_video, video_save_opt=video_save_opt, queueSize=queueSize).start()
 
     if mode == 'webcam':
         print('Starting webcam demo, press Ctrl + C to terminate...')
