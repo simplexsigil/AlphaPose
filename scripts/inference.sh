@@ -10,4 +10,4 @@ python scripts/demo_inference.py \
     --checkpoint ${CKPT} \
     --video ${VIDEO} \
     --outdir ${OUTDIR} \
-    --detector yolo  --save_img --save_video
+    --detector yolo --save_video --detbatch 5 --posebatch 20 --gpus 3 --pose_track --qsize 64 --sp
