@@ -4,17 +4,13 @@ import os
 import platform
 import sys
 import time
-import cv2
 
+import cv2
+import natsort
 import numpy as np
 import torch
 from tqdm import tqdm
-import natsort
 
-from detector.apis import get_detector
-from trackers.tracker_api import Tracker
-from trackers.tracker_cfg import cfg as tcfg
-from trackers import track
 from alphapose.models import builder
 from alphapose.utils.config import update_config
 from alphapose.utils.detector import DetectionLoader
@@ -22,6 +18,10 @@ from alphapose.utils.transforms import flip, flip_heatmap
 from alphapose.utils.vis import getTime
 from alphapose.utils.webcam_detector import WebCamDetectionLoader
 from alphapose.utils.writer import DataWriter
+from detector.apis import get_detector
+from trackers import track
+from trackers.tracker_api import Tracker
+from trackers.tracker_cfg import cfg as tcfg
 
 """----------------------------- Demo options -----------------------------"""
 parser = argparse.ArgumentParser(description='AlphaPose Demo')
@@ -89,10 +89,11 @@ parser.add_argument('--output_video_format', dest='output_video_format',
 parser.add_argument('--output_video_fps', dest='output_video_fps',
                     help='video fps of the output video visualization', type=int, default=30)
 parser.add_argument('--output_video_width', dest='output_video_width',
-                    help='video width of the output video visualization', type=int, default=342)
+                    help='video width of the output video visualization', type=int, default=None)
 parser.add_argument('--output_video_height', dest='output_video_height',
+                    help='video height of the output video visualization', type=int, default=None)
+parser.add_argument('--output_video_min_size', dest='output_video_min_size',
                     help='video height of the output video visualization', type=int, default=256)
-
 
 args = parser.parse_args()
 cfg = update_config(args.cfg)
@@ -104,7 +105,7 @@ args.gpus = [int(i) for i in args.gpus.split(',')] if torch.cuda.device_count() 
 args.device = torch.device("cuda:" + str(args.gpus[0]) if args.gpus[0] >= 0 else "cpu")
 args.detbatch = args.detbatch * len(args.gpus)
 args.posebatch = args.posebatch * len(args.gpus)
-args.tracking = args.pose_track or args.pose_flow or args.detector=='tracker'
+args.tracking = args.pose_track or args.pose_flow or args.detector == 'tracker'
 
 if not args.sp:
     torch.multiprocessing.set_start_method('forkserver', force=True)
@@ -159,7 +160,8 @@ def print_finish_info():
     print('===========================> Finish Model Running.')
     if (args.save_img or args.save_video) and not args.vis_fast:
         print('===========================> Rendering remaining images in the queue...')
-        print('===========================> If this step takes too long, you can enable the --vis_fast flag to use fast rendering (real-time).')
+        print(
+            '===========================> If this step takes too long, you can enable the --vis_fast flag to use fast rendering (real-time).')
 
 
 def loop():
@@ -183,7 +185,8 @@ if __name__ == "__main__":
         det_loader = FileDetectionLoader(input_source, cfg, args)
         det_worker = det_loader.start()
     else:
-        det_loader = DetectionLoader(input_source, get_detector(args), cfg, args, batchSize=args.detbatch, mode=mode, queueSize=args.qsize)
+        det_loader = DetectionLoader(input_source, get_detector(args), cfg, args, batchSize=args.detbatch, mode=mode,
+                                     queueSize=args.qsize)
         det_worker = det_loader.start()
 
     # Load pose model
@@ -204,12 +207,13 @@ if __name__ == "__main__":
         'dt': [],
         'pt': [],
         'pn': []
-    }
+        }
 
     # Init data writer
     queueSize = 2 if mode == 'webcam' else args.qsize
     if args.save_video and mode != 'image':
         from alphapose.utils.writer import DEFAULT_VIDEO_SAVE_OPT as video_save_opt
+
         if mode == 'video':
             video_save_opt['savepath'] = os.path.join(args.outputpath, 'AlphaPose_' + os.path.basename(input_source))
         else:
@@ -217,12 +221,15 @@ if __name__ == "__main__":
         video_save_opt.update(det_loader.videoinfo)
         writer = DataWriter(cfg, args, save_video=True, video_save_opt=video_save_opt, queueSize=queueSize).start()
     else:
+        first_image_path = os.path.join(args.inputpath, input_source[0])
+        f_img = cv2.imread(first_image_path, 0)
+        in_height, in_width = f_img.shape[:2]
         # Author: Zdravko
         ######################################################################################################################
         from alphapose.utils.writer import DEFAULT_VIDEO_SAVE_OPT as video_save_opt
 
         if args.output_video_format == 'avi':
-            video_save_opt['fourcc'] = cv2.VideoWriter_fourcc('M','J','P','G')
+            video_save_opt['fourcc'] = cv2.VideoWriter_fourcc('M', 'J', 'P', 'G')
         else:
             print("Unsupported output video format!")
             print("Exiting...")
@@ -230,19 +237,37 @@ if __name__ == "__main__":
 
         output_dir_first_level = os.path.join(args.outputpath, os.path.basename(os.path.dirname(args.inputpath)))
         if not os.path.exists(output_dir_first_level):
-            os.mkdir(output_dir_first_level) # output_root/class/ for Sims and output_root/vid_id for Toyota ADL
+            os.mkdir(output_dir_first_level)  # output_root/class/ for Sims and output_root/vid_id for Toyota ADL
         output_dir = os.path.join(output_dir_first_level, os.path.basename(args.inputpath))
-        #output_dir = output_dir_first_level
+        # output_dir = output_dir_first_level
         if not os.path.exists(output_dir):
-            os.mkdir(output_dir) # output_root/class/class_video/ for Sims or same as before for Toyota ADL
-        video_save_opt['savepath'] = os.path.join(output_dir, 'AlphaPose_' + os.path.basename(args.inputpath) + '.' + args.output_video_format)
+            os.mkdir(output_dir)  # output_root/class/class_video/ for Sims or same as before for Toyota ADL
+        video_save_opt['savepath'] = os.path.join(output_dir, 'AlphaPose_' + os.path.basename(
+            args.inputpath) + '.' + args.output_video_format)
         print('Video will be written in:', video_save_opt['savepath'])
         video_save_opt['fps'] = args.output_video_fps
-        video_save_opt['frameSize'] = (args.output_video_width, args.output_video_height)
+        if not (args.output_video_width is None and args.output_video_height is None):
+            if args.output_video_width is None:
+                mul = in_width / float(in_height)
+                args.output_video_width = int(round(args.output_video_height * mul))
+            elif args.output_video_height is None:
+                mul = in_height / float(in_width)
+                args.output_video_height = int(round(args.output_video_width * mul))
+            video_save_opt['frameSize'] = (args.output_video_width, args.output_video_height)
+        else:
+            assert args.output_video_min_size is not None, "No output video size was provided."
+            if in_width >= in_height:
+                mul = in_width / float(in_height)
+                video_save_opt['frameSize'] = int(round(mul * args.output_video_min_size)), args.output_video_min_size
+            else:
+                mul = in_height / float(in_width)
+                video_save_opt['frameSize'] = args.output_video_min_size, int(round(mul * args.output_video_min_size))
 
-        args.outputpath = os.path.dirname(video_save_opt['savepath']) # make sure json file is written in the correct dir
+        args.outputpath = os.path.dirname(
+            video_save_opt['savepath'])  # make sure json file is written in the correct dir
         ######################################################################################################################
-        writer = DataWriter(cfg, args, save_video=args.save_video, video_save_opt=video_save_opt, queueSize=queueSize).start()
+        writer = DataWriter(cfg, args, save_video=args.save_video, video_save_opt=video_save_opt,
+                            queueSize=queueSize).start()
 
     if mode == 'webcam':
         print('Starting webcam demo, press Ctrl + C to terminate...')
@@ -290,7 +315,8 @@ if __name__ == "__main__":
                     ckpt_time, pose_time = getTime(ckpt_time)
                     runtime_profile['pt'].append(pose_time)
                 if args.pose_track:
-                    boxes,scores,ids,hm,cropped_boxes = track(tracker,args,orig_img,inps,boxes,hm,cropped_boxes,im_name,scores)
+                    boxes, scores, ids, hm, cropped_boxes = track(tracker, args, orig_img, inps, boxes, hm,
+                                                                  cropped_boxes, im_name, scores)
                 hm = hm.cpu()
                 writer.save(boxes, scores, ids, hm, cropped_boxes, orig_img, im_name)
                 if args.profile:
@@ -301,10 +327,11 @@ if __name__ == "__main__":
                 # TQDM
                 im_names_desc.set_description(
                     'det time: {dt:.4f} | pose time: {pt:.4f} | post processing: {pn:.4f}'.format(
-                        dt=np.mean(runtime_profile['dt']), pt=np.mean(runtime_profile['pt']), pn=np.mean(runtime_profile['pn']))
-                )
+                        dt=np.mean(runtime_profile['dt']), pt=np.mean(runtime_profile['pt']),
+                        pn=np.mean(runtime_profile['pn']))
+                    )
         print_finish_info()
-        while(writer.running()):
+        while (writer.running()):
             time.sleep(1)
             print('===========================> Rendering remaining ' + str(writer.count()) + ' images in the queue...')
         writer.stop()
@@ -318,9 +345,10 @@ if __name__ == "__main__":
         # Thread won't be killed when press Ctrl+C
         if args.sp:
             det_loader.terminate()
-            while(writer.running()):
+            while (writer.running()):
                 time.sleep(1)
-                print('===========================> Rendering remaining ' + str(writer.count()) + ' images in the queue...')
+                print('===========================> Rendering remaining ' + str(
+                    writer.count()) + ' images in the queue...')
             writer.stop()
         else:
             # subprocesses are killed, manually clear queues
@@ -329,4 +357,3 @@ if __name__ == "__main__":
             writer.terminate()
             writer.clear_queues()
             det_loader.clear_queues()
-
